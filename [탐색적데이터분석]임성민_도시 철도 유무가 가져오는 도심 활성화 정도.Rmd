@@ -1,0 +1,584 @@
+---
+# title: "도시 철도 유무가 가져오는 도심 활성화 정도"
+### author: "한남대학교 산업경영공학과 임성민_20182890
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 도시 철도 유무가 가져오는 도심 활성화 정도
+
+대전시가 2025년 완공을 목표로 트램 공사에 착수한다. 기존 트램 계획에서 대전역을 포함한 신규 정거장 10개를 추가하여 스마트 트램이라는 이름의 36.6km, 세계 최장 트램이 될것이라 예상된다. 엄청난 길이에 비해 차량 기지는 하나로 '지나치게 느리지 않겠냐'같은 비난을 받고 있다. 
+이 가운데 판암과 반석이 지하철 건설 이후 엄청난 도시 발전을 이룬 것 처럼 트램의 정거장으로 이득을 볼수 있는 정류장이 궁금해졌다.
+무리를 해서라도 10개의 정류장을 증설한게 정말 효과가 있을까?
+그래서 "트램 정류장이 도심 활성화를 위해 적절한 위치에 있는가?"와 "대전의 구도심 활성화 계획이 잘 이루어 졌는가?"라는 가설을 세운 후 직접 만든 시각화 자료로 검증해 볼것이다. 
+2015년에 계획된 '2020년 대전광역시 도시 및 주거환경정비기본계획'에 의하면 선화동, 삼성동과 같은 대전역 인근 지역에 구도심 활성화를 목표로한 개발사업을 실시했다. 
+이 은행동 인근이 변해가는 것을 눈으로 보았기에 2020년 부터 진행되는 재개발 사업이 얼마나 좋은 성과를 낳을지도 궁금해서 이 같은 주제로 정했다.
+사용할 데이터는 대전광역시 민간 빅데이터 공모전에서 제공된 유동인구 데이터와 공공데이터 포털의 2020년 기준 선정된 도시 재생 활성화 지역, 대전광역시 지하철 승하차 데이터의 역이름, 직접 만든 트램 노선도 데이터이다. 
+
+먼저 핵심데이터와 패키지를 불러온다.
+
+```{r , echo=FALSE}
+# 데이터와 패키지 
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggmap) 
+library(maptools) 
+library(rgdal)
+library(sp)
+library(geosphere)
+library(tibble)
+library(sf)
+library(tidyverse)
+library(leaflet)
+library(RColorBrewer)
+library(rgeos)
+library(spData) 
+library(raster)
+library(spDataLarge)
+library(tmap)
+library(mapview)
+library(magick)
+library(proj4)
+library(plotly)
+
+# 유동 인구
+df.person <- read.csv("C:/Users/smcom/Desktop/민간데이터_빅데이터 공모전/data/2020년 유동인구.csv", header = T, stringsAsFactors = T)
+
+#동이름과 시군구 명을 글로벌로 바꿔줌
+df.person <- rename(df.person, "EMD_KOR_NM" = "행정동")
+df.person <- rename(df.person, "SIGUNGU" = "구")
+
+#지하철 사용
+df.subway <- read.csv("C:/Users/smcom/Desktop/민간데이터_빅데이터 공모전/data/대전광역시도시철도공사_시간대별승하차인원_20210331.csv", header = T, stringsAsFactors = T)
+
+#도시재생 활성화 지역
+df.dosi <- read.csv("C:/Users/smcom/Desktop/민간데이터_빅데이터 공모전/data/대전광역시_도시재생활성화지역_20200101.csv", header = T, stringsAsFactors = T)
+
+df.dosi <- rename(df.dosi, "EMD_KOR_NM" = "동명")
+
+```
+
+
+불러온 데이터에는 좌표데이터가 없기 때문에 따로 대전의 좌표값을 부여해 줘야한다. 
+이때 sf 클래스 객체와 sp 클래스 객체를 나누어서 수업에서 활용된 tmap과 기본적인 시각화 툴인 ggplot2모듈을 모두 활용해 볼것이다. 
+대화형 지도 모듈인 tmap_view나 leaflet interctive map을 활용하고 싶었으나 rmd 파일에서 아웃풋이 출력되지 않는 치명적인 오류가 발생하여 추후 따로 해보기로 한다.
+
+전국 시도, 시군구, 읍면동 데이터를 불러와서 대전광역시 행정동 코드: 3000000000를 이용하여 따로 대전 데이터를 만든다.
+s4 형으로 제작된 대전 데이터에 좌표계를 WGS84로 변경해 한국에 맞는 sp 데이터로 만든다. 그리고 sf형태로 만든 후 따로 저장한다.
+
+```{r , echo=FALSE}
+
+sido_shp <- st_read("C:/Users/smcom/Desktop/R - 복사본/min/CTPRVN_202101/TL_SCCO_CTPRVN.shp")
+sido_shp %>% head()
+
+sido_shp$SIG_KOR_NM <- iconv(sido_shp$CTP_KOR_NM, localeToCharset(), 'UTF-8')
+
+
+sido_shp$CTP_KOR_NM <- iconv(sido_shp$CTP_KOR_NM, from = "CP949", to = "UTF-8", sub = NA, mark = TRUE, toRaw = FALSE)
+
+dj_shp <- subset(sido_shp, CTP_KOR_NM  == '대전광역시')
+
+sido_shp
+unique(sido_shp$CTP_KOR_NM)
+
+DJ_shp <- sido_shp %>% 
+  filter(str_detect(CTP_KOR_NM, "대전광역시"))
+
+# 시군구 
+sigungu <- st_read("C:/Users/smcom/Desktop/R - 복사본/min/SIG_202101/TL_SCCO_SIG.shp")
+sigungu %>% head()
+
+sigungu$SIG_KOR_NM <- iconv(sigungu$SIG_KOR_NM, localeToCharset(), 'UTF-8')
+
+deaj_shp <- sigungu %>% 
+  filter(str_detect(SIG_KOR_NM, "대전"))
+
+dj_shp <- subset(sigungu, SIG_KOR_NM  == c('대전시'))
+
+sido_shp
+unique(sido_shp$CTP_KOR_NM)
+
+DJ_shp <- sido_shp %>% 
+  filter(str_detect(CTP_KOR_NM, "대전광역시"))
+
+# 읍면동
+### 대전 파일과 읍면동 파일을 붙이자.
+st_crs(sido_shp)
+
+emd_shp <- st_read("C:/Users/smcom/Desktop/R - 복사본/min/EMD_202101/TL_SCCO_EMD.shp")
+
+## 인코딩 변경
+emd_shp$EMD_KOR_NM <- iconv(emd_shp$EMD_KOR_NM, from = "CP949", to = "UTF-8", sub = NA, mark = TRUE, toRaw = FALSE)
+
+
+unique(emd_shp$EMD_KOR_NM)
+
+## 대전시 행정동 코드: 3000000000
+DJ_emd_shp <- emd_shp %>% 
+  mutate(SIGUNGU = case_when(str_detect(EMD_CD, "^30140") ~ "중구",
+                             str_detect(EMD_CD, "^30110") ~ "동구",
+                             str_detect(EMD_CD, "^30230") ~ "대덕구",
+                             str_detect(EMD_CD, "^30200") ~ "유성구",
+                             str_detect(EMD_CD, "^30170") ~ "서구")) %>% 
+  filter(!is.na(SIGUNGU))
+
+st_crs(DJ_shp)
+st_crs(emd_shp)
+
+DJ_emd_shp <-  DJ_emd_shp %>% 
+  mutate(SIGUNGU = case_when(str_detect(EMD_CD, "^30140") ~ "중구",
+                             str_detect(EMD_CD, "^30110") ~ "동구",
+                             str_detect(EMD_CD, "^30230") ~ "대덕구",
+                             str_detect(EMD_CD, "^30200") ~ "유성구",
+                             str_detect(EMD_CD, "^30170") ~ "서구")) %>% 
+  filter(!is.na(SIGUNGU))
+
+
+## sf 데이터프레임 --> shapefile 변환
+DJ_EMD <-  as(DJ_emd_shp, 'Spatial')
+shp <- DJ_EMD
+
+# sp 자료 확인
+shp@data
+class(shp)
+
+
+library(sp)
+# 좌표 확인: UTM-K(GRS-80) 좌표계에서 WGS84 경위도 좌표계로 변환한다.
+# sf 데이터에서 sp 데이터로 만들 때 따로 좌표를 빼기 위함
+from.crs <- " +proj=longlat +datum=WGS84 +no_defs "
+to.crs <- "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"
+shp <- spTransform(shp, to.crs)
+### 지도 확인
+plot(shp)
+class(shp)
+
+## shapefile --> 데이터프레임 변환
+DJ_emd_SHP <- fortify(shp)
+## sf 데이터프레임 --> shapefile 변환
+DJ_EMD_shp <-  as(DJ_emd_shp, 'Spatial')
+class(DJ_emd_shp)
+class(DJ_EMD_shp)
+str(DJ_emd_SHP)
+
+plot(shp)
+
+```
+
+상대적으로 큰 동네는 1~3동으로 나뉘어 있다. 하지만 대한민국 법정동 코드는 하나로 되어있기 때문에 나뉘어진 동네의 이름들을 모두 하나로 바꿔주는 과정이 필요하다. 
+행정표준코드 관리 시스템 (https://www.code.go.kr/stdcode/regCodeL.do)을 기준으로 바꿔주고 행정동 코드가 등록되지 않은 곳(ex. 중앙동 등)은 자연 누락된다.
+유동인구 데이터와 도시재생 활성화 지역 데이터에 모두 새로운 값을 넣어준다.
+
+```{r , echo=FALSE}
+
+#나뉘어진 동이름 합치기
+df.person$EMD_KOR_NM <- gsub("태평1동", "태평동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("태평2동", "태평동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("판암1동", "판암동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("판암2동", "판암동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("도마1동", "도마동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("도마2동", "도마동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("문화1동", "문화동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("문화2동", "문화동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("유천1동", "유천동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("유천2동", "유천동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("가양1동", "가양동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("가양2동", "가양동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("갈마1동", "갈마동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("갈마2동", "갈마동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("월평1동", "월평동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("월평2동", "월평동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("월평3동", "월평동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("관저1동", "관저동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("관저2동", "관저동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("둔산1동", "둔산동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("둔산2동", "둔산동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("둔산3동", "둔산동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("온천1동", "온천동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("온천2동", "온천동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("노은1동", "노은동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("노은2동", "노은동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("노은3동", "노은동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("법1동", "법동", df.person$EMD_KOR_NM)
+df.person$EMD_KOR_NM <-gsub("법2동", "법동", df.person$EMD_KOR_NM)
+
+
+#나뉘어진 동이름 합치기
+df.dosi$EMD_KOR_NM <- gsub("태평1동", "태평동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("태평2동", "태평동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("판암1동", "판암동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("판암2동", "판암동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("도마1동", "도마동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("도마2동", "도마동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("문화1동", "문화동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("문화2동", "문화동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("유천1동", "유천동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("유천2동", "유천동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("가양1동", "가양동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("가양2동", "가양동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("갈마1동", "갈마동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("갈마2동", "갈마동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("월평1동", "월평동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("월평2동", "월평동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("월평3동", "월평동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("관저1동", "관저동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("관저2동", "관저동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("둔산1동", "둔산동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("둔산2동", "둔산동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("둔산3동", "둔산동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("온천1동", "온천동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("온천2동", "온천동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("노은1동", "노은동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("노은2동", "노은동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("노은3동", "노은동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("법1동", "법동", df.dosi$EMD_KOR_NM)
+df.dosi$EMD_KOR_NM <-gsub("법2동", "법동", df.dosi$EMD_KOR_NM)
+
+
+#유동인구 남자
+he  = df.person[,c(6:13)]
+#유동인구 여자
+she = df.person[,c(14:21)]
+
+# 시, 시군구, 읍면동, 시간대, 남, 여 열만 남긴다.
+person <- data.frame(df.person[,c(2:5)],'남' = rowSums(he) , '여' = rowSums(she))
+
+
+```
+
+df.subway(지하철) 데이터에서 필요한 것은 지하철의 위치 뿐이기 때문에 역명을 기준으로 지하철이 지나는 동네를 찾는다.
+트램이 다니는 동네도 찾아서 따로 리스트로 저장한다. df.subway에는 승차와 하차가 모두 존재하기 때문에 역이름과 동이름이 중복되지 않는 값만 남긴다.
+
+```{r , echo=FALSE}
+
+# 재생활성화 지역 unique
+df.re <- unique(df.dosi[,c('EMD_KOR_NM')])
+
+#트램
+# 오류동, 정동, 대사동, 대흥동. 인동, 대동, 자양동, 가양동, 중리동, 법동, 둔산동, 만년, 도룡동, 구성동,
+# , 어은동, 궁동, 상대동, 봉명동, 도안동,  진잠동, 가수원동, 복수동, 유천동, 월평동, 장대동, 원내동, 법동, 관저동, 정림동, 도마동, 오정동, 
+
+library(dplyr)
+person_1 <- person %>% mutate('남여' = if_else(남 > 여, "남", (if_else( 남 == 여, "같음" ,"여"))))
+person_1
+  
+# 역이름에 맞는 동 매치하기
+df.subway$EMD_KOR_NM <- ifelse ((df.subway$역명 %in%  c('판암')), "판암동",
+                   ifelse ((df.subway$역명 %in%   c('신흥')), "판암동",
+                           ifelse ((df.subway$역명 %in%   c( '대동' )), "정동", 
+                                   ifelse ((df.subway$역명 %in%   c('대전역')), "정동",
+                                           ifelse ((df.subway$역명 %in%   c('중앙로')), "은행동",
+                                                   ifelse ((df.subway$역명 %in%   c('중구청')), "선화동",
+                                                           ifelse ((df.subway$역명 %in%   c('서대전네거리')), "용두동",
+                                                                   ifelse ((df.subway$역명 %in%   c('오룡')), "오류동",
+                                                                           ifelse ((df.subway$역명 %in%   c('용문')), "용문동",
+                                                                                   ifelse ((df.subway$역명 %in%   c('탄방')), "탄방동",
+                                                                                           ifelse ((df.subway$역명 %in%   c('시청','정부청사')), "둔산동",
+                                                                                                   ifelse ((df.subway$역명 %in%   c('갈마')), "갈마동",
+                                                                                                           ifelse ((df.subway$역명 %in%   c('월평','갑천')), "월평동",
+                                                                                                                   ifelse ((df.subway$역명 %in%   c('유성온천')), "봉명동",
+                                                                                                                           ifelse ((df.subway$역명 %in%   c('구암','현충원')), "구암동",
+                                                                                                                                   ifelse ((df.subway$역명 %in%   c('월드컵경기장','노은')), "노은동",
+                                                                                                                                           ifelse ((df.subway$역명 %in%   c('지족')), "지족동",
+                                                                                                                                                   "반석동")))))))))))))))))
+
+
+df.subway <- df.subway[,c(3,5:29)]
+df.subway
+
+#트램이 지나는 동네 만들기
+tram <- c("오류동", "정동", "대사동", "대흥동" ,"인동", "대동" ,"용전동",
+         "자양동", "가양동", "중리동", '법동', "둔산동", "만년", 
+         "도룡동", "구성동", "어은동", "궁동", "상대동", "봉명동",  
+         "도안동",  "진잠동", "가수원동", "복수동", "유천동", "월평동", 
+         "장대동", "원내동", "법동", "관저동", "정림동", "도마동", "오정동")
+
+df.sub <- unique(df.subway[,c('역명','EMD_KOR_NM')])
+
+
+
+```
+
+ggplot을 위한 데이터와 tmap을 위한 데이터를 따로 생성한다.
+모두 합친 데이터를 sp 데이터로 만든다.
+유동인구 데이터는 데이터의 특성상 똑같은 값이 동별로 시간별로 날짜별로 계속 반복되는데 이를 막기위해
+필요없는 중복값은 동별로 첫번째 값만 남기고 삭제한다. 이때 동별로 24개의 시간 데이터를 가지게 된다.
+전처리한 재개발 데이터와 트램, 지하철 데이터는 따로 좌표를 부여하여 유동인구 데이터와 달리 중복없이 생성한다.
+데이터를 합칠 때 '트램','지하철','재개발'에 해당되는 동네는 1로 다니지 않는 동네는 0으로 하여 열을 생성한다.
+유동인구 데이터 또한 남자가 더 많은 시간은 '남'으로 여자가 더 많은 시간은 '여', 데이터가 없는 시간은 '0'으로 표시한다.
+
+
+```{r , echo=FALSE}
+shp.df <- fortify(shp)
+shp@data$id <- rownames(shp@data)
+shp.df.use <- left_join(shp.df, shp@data, by="id")
+shp.df.use <- shp.df.use[order(shp.df.use$id, shp.df.use$order),]
+
+# sf 데이터
+#유동인구의 용이한 분석을 위해 첫번째 값만 남기고 중복을 제거하자
+### Join으로 자료 추가
+shp.person <- full_join(DJ.shp, person_1, by="EMD_KOR_NM")
+shp.person <- shp.person[,-c(6)]
+shp.person[is.na(shp.person)] <- 0
+shp.person$시 <- "대전광역시"
+shp.person
+
+
+# 따로 합치기
+shp.sub <- full_join(shp.df.use, df.sub, by="EMD_KOR_NM")
+shp.sub$트램 <- 0
+shp.sub$트램 <- ifelse((shp.sub$EMD_KOR_NM %in% tram), 1, 0)
+shp.sub$재개발 <- 0 
+shp.sub$재개발 <- ifelse((shp.sub$EMD_KOR_NM %in% df.re), 1, 0)
+
+str(shp.sub)
+str(person_1)
+
+
+#sp 데이터
+str(person_1)
+df.person_dis <- person_1 %>% distinct(시간대,.keep_all = TRUE)
+str(df.person_dis)
+shp.person <- full_join(shp.df.use, person_1, by="EMD_KOR_NM")
+str(shp.person)
+shp.person <- shp.person[,-c(9,13)]
+shp.person[is.na(shp.person)] <- 0
+shp.person$시 <- "대전광역시"
+str(shp.person)
+
+shp_all <-shp.person
+shp_all$지하철 <- 0
+str(shp_all)
+shp_all$지하철 <- ifelse((shp.df.use$EMD_KOR_NM %in% df.sub$EMD_KOR_NM), 1, 0)
+shp_all$트램 <- 0
+shp_all$트램 <- ifelse((shp_all$EMD_KOR_NM %in% tram), 1, 0)
+shp_all$재개발 <- 0 
+shp_all$재개발 <- ifelse((shp_all$EMD_KOR_NM %in% df.re), 1, 0)
+str(shp_all)
+
+```
+
+남여의 유동인구를 비교한 tmap 시각화 자료이다. 서구 둔산동과 중구 은행-대전역 거리를 중심으로 몰려있음을 확인 할 수 있다.
+
+```{r , warning= FALSE , fig.align= "center" , fig.height=5 , fig.width= 5 , message=FALSE}
+map_person <- tm_shape(shp.person) + tm_polygons(col = "남여")+tm_layout(title = "남여 유동인구 비교", bg.color = "lightblue")
+map_person
+
+```
+
+좀더 자세하게 알고 싶어서 시간대 별로 점의 크기가 달라지는 그림을 만들었다.
+
+```{r}
+# .gif 사진 만들기
+library(gifski)
+str(shp.person)
+urb_woman = tm_shape(shp.sub) + tm_polygons() + 
+  tm_shape(shp.person) + tm_dots(size = "여", col = 'red') +
+  tm_facets(along = "시간대", free.coords = FALSE)
+
+tmap_animation(urb_woman, filename = "woman_anim.gif", delay = 25)
+
+urb_man = tm_shape(shp.sub) + tm_polygons() + 
+  tm_shape(shp.person) + tm_dots(size = "남", col = 'blue') +
+  tm_facets(along = "시간대", free.coords = FALSE)
+
+tmap_animation(urb_man, filename = "man_anim.gif", delay = 25)
+```
+
+#![]("C:/Users/smcom/Desktop/민간데이터_빅데이터 공모전/data/man_anim.gif)
+#![]("C:/Users/smcom/Desktop/민간데이터_빅데이터 공모전/data/woman_anim.gif)
+
+시간에 따라 남녀 유동인구 비율이 어떻게 변화하는가에 대한 interactive animation이다.
+시간에 따른 원의 움직임을 보면 중구, 서구에 여성인구가 동구, 대덕구, 유성구에 남성 인구가 우세함을 알 수있다.
+
+위치에 있어서 큰 차이는 없으며 대덕구 공장단지와 유성구 대덕 테크노밸리에는 남성이 중구-서구 중심가에는 여성 유동인구 비율이 높게 출력되었다.
+24시간 데이터를 모두 가지고 있기에 이 시간을 모두 시각화에 반영하지 않고 가장 유동인구가 많은 시간만 반영하기로 하였다.
+아래 그림은 순서대로 여성과 남성의 시간대별 유동인구 비율이다.
+
+
+```{r , warning= FALSE , fig.align= "center" , fig.height=5 , fig.width= 5 , message=FALSE}
+ggplot(sp_all, aes(x=시간대, y=여)) +
+  geom_point(shape=15, size=3, colour="blue") +
+  ggtitle("Scatter plot : 시간대별 여성 분포 비율") +
+  theme(plot.title=element_text(size=20))
+
+
+```
+
+```{r , warning= FALSE , fig.align= "center" , fig.height=5 , fig.width= 5 , message=FALSE}
+ggplot(sp_all, aes(x=시간대, y=남)) +
+  geom_point(shape=15, size=3, colour="blue") +
+  ggtitle("Scatter plot : 시간대별 남성 분포 비율") +
+  theme(plot.title=element_text(size=20))
+
+```
+
+14시에서 18시에 가장 많은 움직임이 포착되었는데,
+퇴근시간과 하교 시간이 아닌 지역에 머무르는 시간을 사용하기 위해 15시를 기준으로 선택했다.
+경도와 위도를 계산하여 베이스 맵을 그리고 15시의 남여 데이터를 나누어 분석에 사용했다.
+이때 이미 만들어진 데이터를 남여 중 더 우세한 쪽으로 나누었기 때문에 모든 값(재개발, 트램, 지하철)이 동등하게 들어가지 못했다.
+때문에 각 성별이 더 많이 방문하고 선호하는 동네를 기준으로 해석한다.
+
+
+```{r , warning= FALSE , fig.align= "center" , fig.height=5 , fig.width= 5 , message=FALSE}
+sp_all <- shp_all
+str(sp_all)
+
+### 경도와 위도 상자 좌표 계산 함수 
+fn_lon_lat_box <- function(lon, lat, dist=1){
+  h <- 0.0035*3.5*dist 
+  w <- 0.0035*4*dist
+  c(lon-w, lat-h, lon+w, lat+h) }
+
+
+# 경도와 위도로 표시할 중심 좌표와 거리 
+boxLocation <- fn_lon_lat_box(127.385, 36.375, 8) # 지도 다운로드 
+krMap <- get_map(location=boxLocation) # 지도 표시 ggmap(krMap)
+
+
+#남자
+data.man <- sp_all %>% subset(남여=='남')
+
+data.man.5 <- data.man %>% subset(시간대==05) 
+data.man.10 <- data.man %>% subset(시간대==10) 
+data.man.15 <- data.man %>% subset(시간대==15) 
+data.man.30 <- data.man %>% subset(시간대==20) 
+
+# 남자가 더 많은 지역
+# 남자 15시 유동인구
+str(data.man)
+theme_set(theme_bw(16))
+m <- ggmap(krMap) 
+m1 <-  m + stat_density2d(data=data.man.15,         # 남자 15시 유동인구 밀도
+                          aes(x = long, y = lat , fill = 남, group = 남 ), geom="polygon", alpha=0.3, color= 'blue'
+                          )+ stat_bin2d(
+  aes(x=long, y = lat,   fill =재개발),    # 재개발 구역 타일화의 여성 유동인구
+  size = .5, bins = 30, alpha = 0.3 , colour = "white",
+  data = data.man.15
+  )+geom_tile(data = fortify(data.man.15),
+                  aes(long, lat, fill = 지하철 ),  # 지하철 노선 지역 노란 줄
+                   colour = "yellow", alpha = 1
+  )+ geom_tile(data = fortify(data.man.15),
+                  aes(long, lat, fill = 트램 ),    #  지하철 + 트램 노선
+                   colour = "green", alpha = 1
+                  )
+
+m1
+```
+
+
+흰색 배경 타일은 재개발 대상 지역이며 파란색 히트맵은 해당 지역의 남성 인구밀도이다.
+좁은곳에 밀집해 움직이지 않고 옅게 나타날 수록 밀도가 높은것이다.
+
+선으로 그려진 동네는 지하철과 트램이 있는 지역이다. 
+남성이 더 우세한 경우만을 출력하여서 재개발 지역과 전철역사가 제대로 표현되지 않았지만
+남성 인구의 인구밀도 그래프는 연구단지와 대학가, 둔산 그리고 탄방, 유성, 중구 일부 회사밀집 지역에 한정되었다.
+다른 시간대의 플롯도 만찬가지여서 여성 플롯을 확인해 보기로 했다.
+
+
+```{r , warning= FALSE , fig.align= "center" , fig.height=5 , fig.width= 5 , message=FALSE}
+# 5시 # 10시 #15시 #20시로 시간을 나눈다.
+data.woman <- sp_all %>% subset(남여=='여') 
+
+#여자
+data.woman.5 <- data.woman %>% subset(시간대==05) 
+data.woman.10 <- data.woman %>% subset(시간대==10) 
+data.woman.15 <- data.woman %>% subset(시간대==15) 
+data.woman.20 <- data.woman %>% subset(시간대==20) 
+
+# 여자가 더 많은 지역
+# 여자 15시 유동인구
+str(data.woman.15)
+theme_set(theme_bw(16))
+w <- ggmap(krMap)   
+w1 <-  w + stat_density2d(data=data.woman.15,         # 여자 15시 유동인구 밀도
+                          aes(x = long, y = lat , fill = 여, group = 여 ), geom="polygon", alpha=0.3, color= 'pink'
+                          )+ stat_bin2d(
+  aes(x=long, y = lat,   group =재개발),    # 재개발 구역 타일화의 여성 유동인구
+  size = .5, bins = 30, alpha = 0.3 , colour = "white",
+  data = data.woman.15
+  )+geom_tile(data = fortify(data.woman.15),
+                  aes(long, lat, group = 지하철 ),  # 지하철 노선 지역 노란 줄
+                   colour = "yellow", alpha = 1
+  )+ geom_tile(data = fortify(data.woman.15),
+                  aes(long, lat, group = 트램 ),    #  지하철 + 트램 노선
+                   colour = "orange", alpha = 1
+                  )
+
+w1
+
+
+
+
+```
+
+확실히 여성인구는 다양하게 퍼져있는 모습이었다.
+전역에서 움직임이 관찰되었고 와중 옅게 나타난 부분은 연구단지와 대학가, 둔산-탄방, 은행-선화동 부분이었다.
+
+여성인구와 남성인구 모두 중구 은행-선화동, 서구 둔산-탄방동, 대덕 연구개발 특구에 많은 움직임을 보였다.
+2015년 이전의  유동인구 데이터를 구할 수가 없어서 도심활성화 사업 전과 직접적인 비교는 불가능 했다.
+하지만유성온천역이 처음 생겼을 때 장대동 일대가 논밭이었음을 생각하면 많은 발전을 이뤘다고 볼 수 있었다.
+가장 유동인구가 많은 시간대에에 성별에 상관없이 구도심과 신도심 모두 많은 움직임을 보였다는 점에서 도심 활성화 사업의 성과가 있었다고 판단할 수 있었다.
+
+서로 밀집되는 지역은 비슷하고 오후 3시인 점과 10대 미만부터 70대 이상의 다양한 연령층으로 구성되었다는 점을 고려하여
+이 지도에 큰 의미를 두지 않고 특정 동네의 방문 횟수를 알아보아 가장 활성화된 도심지를 알아보기로 했다.
+
+```{r}
+library(plotly)
+library(gapminder)
+
+p <- data.woman %>%
+  ggplot( aes(시간대, 여, size = 여, color=EMD_KOR_NM))+
+  geom_point() +
+  theme_bw()
+
+p
+```
+
+여성의 경우 둔산동과 탄방동 갈마동의 압도적 우세를 보였다. 그 외에는 어느정도 평균치를 유지한다.
+그렇다면 기존 도시재생활성화 사업 대상지역이면서 트램 노선이 지나가는 '도마','가양','중리'를 확인해보자.
+물론 이 외에도 다양한 사업 대상지역이 있지만 기존의 지하철이 지나가거나 어느정도 상권이 활성화된 곳은 제외했다.
+도마, 가야, 중리의 유동인구 비율은 상당히 저조한 상황이다.
+남성의 경우를 확인해보자.
+
+```{r}
+g <- data.woman %>%
+  ggplot( aes(시간대, 남, size = 남, color=EMD_KOR_NM))+
+  geom_point() +
+  theme_bw()
+
+g
+```
+
+남성 역시 둔산, 탄방, 갈마의 방문이 가장 많다. 
+남성과 여성 둘다 20시 이후 갈마동의 방문이 크게 급증하는 것을 볼 수 있는데 지하철이 들어서기전 다양한 사건의 중심지였던 갈마동에서, 소위 '갈리단길'로 신분 상승했다는 것을 보여준다.
+
+시각화 자료를 통해 지하철이 생김으로 이전에는 생각하기 힘들었던 발전을 이룬 지역도 있었고 죽었던 구도심이 되살아난 경우를 확인했다.
+도마동 트램건설 예정지역에는 현재 가장 인기많은 아파트인 도마동 e편한세상이 건설중이다.
+지금은 너무 길고 돌아가는 트램 노선의 선정이 이해되지 않을 수 있다. 
+하지만 트램이 들어서기 까지 예비 역사 주변으로 상권이 발달하고 완공 후 부터는 천천하지만 꾸준하게 발전되는 도심을 볼 수 있을 것이다.
+세삼 대중교통 노선이 만들어내는 나비효과에 대해 생각해 볼 수 있었던 프로젝트였다.
+
+
+
++ 24시간을 모두 가진 데이터 였기에 leaflet 모듈을 활용하여 인터렉티브 플롯을 만들고 싶었으나 데이터 형태를 바꾸면 지나치게 손상되어 그럴수가 없었다.
+총 24시로 만들어진 데이터이지만 아래와 예시에서와 같이 시간대를 모두 출력할 경우 그래프를 알아볼 수 없다.
+추후 같은 데이터를 이용해 다른 방식으로 분석 한다면 이 문서를 애니메이션 화하여 경로로 표현하는 것을 목표로 하고 싶다. 
+
+
+```{r , echo=FALSE}
+# 시간대를 이용한 분석은 결과자료가 너무 작게 출력되어서 분석 방식에서 제외한다.
+ggmap(krMap) +
+stat_density2d(aes(long, lat, fill = 재개발, alpha = 남),
+  bins = 5, geom = "polygon",
+  data = data.man) +
+  scale_fill_gradient(low = "black", high = "red") +
+  facet_wrap(~ 시간대)
+
+```
+
+
+
